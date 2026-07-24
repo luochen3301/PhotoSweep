@@ -1,6 +1,6 @@
 # 在群晖 Docker / Container Manager 安装 PhotoSweep
 
-公共镜像：`ghcr.io/luochen3301/photosweep:latest`
+公共镜像：`docker.io/luochen23151/photosweep:latest`
 
 支持的架构：`linux/amd64`、`linux/arm64`。
 
@@ -10,21 +10,13 @@
 
 ### 1. 下载镜像
 
-旧版「映像 → 新增 → 从 URL 添加」只接受 Docker Hub 页面地址，不能直接填写 GHCR。推荐使用 DSM 的图形界面任务计划拉取镜像：
+旧版「映像 → 新增 → 从 URL 添加」只接受 Docker Hub 页面地址。请直接粘贴：
 
-1. 打开「控制面板」→「任务计划」。
-2. 选择「新增」→「计划的任务」→「用户定义的脚本」。
-3. 任务名称填写 `拉取 PhotoSweep`，用户选择 `root`。
-4. 在「任务设置」的用户定义脚本中填写：
-
-```bash
-docker pull ghcr.io/luochen3301/photosweep:v0.1.0
+```text
+https://hub.docker.com/r/luochen23151/photosweep
 ```
 
-5. 保存任务，选中它并点击「运行」。完成后回到 Docker 的「映像」页面刷新。
-6. 镜像出现后即可删除这条临时任务。
-
-也可以临时开启 SSH 执行同一个 `sudo docker pull` 命令。不要勾选「信任的 SSL 自签名证书」，GHCR 使用的是正常受信任证书。
+点击「新增」后选择 `latest` 标签并等待下载完成。不要勾选「信任的 SSL 自签名证书」。
 
 ### 2. 启动容器
 
