@@ -18,7 +18,7 @@ PhotoSweep 是一个轻量、现代、安全的 NAS Web 照片清理工具。V1 
 ghcr.io/luochen3301/photosweep:latest
 ```
 
-- 旧版群晖「Docker」图形界面：在「映像」中从上述 URL 添加，按文档映射四个目录后启动。
+- 旧版群晖「Docker」图形界面：通过 DSM 任务计划执行一次 `docker pull`，再按文档映射四个目录后启动。
 - 新版 Container Manager：使用 [`docker-compose.synology.yml`](docker-compose.synology.yml) 和 [`synology.env.example`](synology.env.example)。
 - 完整步骤见 [`docs/SYNOLOGY.md`](docs/SYNOLOGY.md)。
 

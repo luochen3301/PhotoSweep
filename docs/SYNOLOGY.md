@@ -10,19 +10,21 @@
 
 ### 1. 下载镜像
 
-进入「映像」→「新增」→「从 URL 添加」，填写：
+旧版「映像 → 新增 → 从 URL 添加」只接受 Docker Hub 页面地址，不能直接填写 GHCR。推荐使用 DSM 的图形界面任务计划拉取镜像：
 
-```text
-ghcr.io/luochen3301/photosweep:latest
-```
-
-如果旧版 DSM 不接受 GHCR URL，可临时开启 SSH，只执行一次：
+1. 打开「控制面板」→「任务计划」。
+2. 选择「新增」→「计划的任务」→「用户定义的脚本」。
+3. 任务名称填写 `拉取 PhotoSweep`，用户选择 `root`。
+4. 在「任务设置」的用户定义脚本中填写：
 
 ```bash
-sudo docker pull ghcr.io/luochen3301/photosweep:latest
+docker pull ghcr.io/luochen3301/photosweep:v0.1.0
 ```
 
-完成后镜像会自动出现在「映像」页面。
+5. 保存任务，选中它并点击「运行」。完成后回到 Docker 的「映像」页面刷新。
+6. 镜像出现后即可删除这条临时任务。
+
+也可以临时开启 SSH 执行同一个 `sudo docker pull` 命令。不要勾选「信任的 SSL 自签名证书」，GHCR 使用的是正常受信任证书。
 
 ### 2. 启动容器
 
