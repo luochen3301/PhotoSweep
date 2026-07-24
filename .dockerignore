@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+backend/tests
+frontend/node_modules
+frontend/dist
+data
+cache
+trash
+sample-media
+design-qa*.png
