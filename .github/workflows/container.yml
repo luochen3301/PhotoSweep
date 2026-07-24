@@ -19,6 +19,8 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/photosweep
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
 jobs:
   build:
@@ -66,3 +68,40 @@ jobs:
 
       - name: Inspect published manifest
         run: docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Mirror image to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        shell: bash
+        run: |
+          tags=(
+            --tag "docker.io/${DOCKERHUB_USERNAME}/photosweep:sha-${GITHUB_SHA::7}"
+          )
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tags+=(--tag "docker.io/${DOCKERHUB_USERNAME}/photosweep:${GITHUB_REF_NAME}")
+          else
+            tags+=(--tag "docker.io/${DOCKERHUB_USERNAME}/photosweep:latest")
+          fi
+
+          docker buildx imagetools create \
+            "${tags[@]}" \
+            "${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+
+      - name: Inspect Docker Hub mirror
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="latest"
+          fi
+          docker buildx imagetools inspect "docker.io/${DOCKERHUB_USERNAME}/photosweep:${tag}"
