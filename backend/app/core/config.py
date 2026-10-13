@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -24,10 +25,29 @@ class Settings(BaseSettings):
         default_factory=lambda: [Path("/media")]
     )
     cookie_secure: bool = False
-    session_days: int = 14
-    job_workers: int = 1
-    metadata_workers: int = 2
+    public_origin: str = ""
+    session_days: int = Field(default=14, ge=1, le=365)
+    job_workers: int = Field(default=1, ge=1, le=1)
+    metadata_workers: int = Field(default=2, ge=1, le=8)
     frontend_dist: Path | None = None
+
+    @field_validator("public_origin")
+    @classmethod
+    def validate_origin(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username
+                or parsed.password
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("PUBLIC_ORIGIN 必须是完整 HTTP(S) 源，不能含路径或密码")
+        return value
 
     @field_validator("allowed_media_roots", mode="before")
     @classmethod

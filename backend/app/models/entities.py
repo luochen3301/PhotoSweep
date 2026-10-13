@@ -93,6 +93,8 @@ class MediaFile(Base):
         Index("ix_media_status_type", "status", "media_type"),
         Index("ix_media_size_type_status", "size", "media_type", "status"),
         Index("ix_media_mtime", "mtime_ns", "id"),
+        Index("ix_media_status_mtime", "status", "mtime_ns", "id"),
+        Index("ix_media_library_status_mtime", "library_id", "status", "mtime_ns", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -218,6 +220,7 @@ class DuplicateMember(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("duplicate_groups.id", ondelete="CASCADE"))
     media_id: Mapped[int] = mapped_column(ForeignKey("media_files.id", ondelete="CASCADE"))
     is_keep: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_default_keep: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     is_hardlink: Mapped[bool] = mapped_column(Boolean, default=False)
     group: Mapped[DuplicateGroup] = relationship(back_populates="members")
     media: Mapped[MediaFile] = relationship()

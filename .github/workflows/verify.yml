@@ -1,0 +1,84 @@
+name: Verify PhotoSweep
+
+on:
+  push:
+    branches: ["codex/**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libimage-exiftool-perl libheif1
+      - run: python -m venv .venv && .venv/bin/pip install -r requirements-dev.lock
+      - run: .venv/bin/ruff check backend && .venv/bin/pytest -q
+      - run: .venv/bin/python scripts/benchmark_api_100k.py
+      - working-directory: frontend
+        run: npm ci && npm run typecheck && npm run test:unit && npm run test:sites && npm run build
+      - working-directory: frontend
+        run: npx playwright install --with-deps chromium && npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-verification
+          path: frontend/test-results
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/${{ matrix.arch }}
+          tags: photosweep:verify
+          cache-from: type=gha,scope=verify-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=verify-${{ matrix.arch }}
+      - name: Read-only container, non-root application and bundled tools
+        shell: bash
+        run: |
+          docker run -d --name photosweep-verify --platform linux/${{ matrix.arch }} \
+            --read-only --tmpfs /tmp:mode=1777,size=256m --cap-drop ALL \
+            --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+            --security-opt no-new-privileges:true --init \
+            -v photosweep-data:/app/data -v photosweep-cache:/app/cache \
+            -v photosweep-trash:/trash -p 8765:8080 photosweep:verify
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:8765/health/ready; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8765/health/ready
+          curl -fsS http://127.0.0.1:8765/ | grep 'id="root"'
+          docker exec photosweep-verify python -c "from pathlib import Path; children=Path('/proc/1/task/1/children').read_text().split(); assert children; states=[Path('/proc/'+p+'/status').read_text() for p in children]; assert all('Uid:\t0\t0\t0\t0' not in s for s in states), states"
+          docker exec photosweep-verify ffprobe -version
+          docker exec photosweep-verify exiftool -ver
+          docker exec photosweep-verify python -c "import pillow_heif; print(pillow_heif.__version__)"
+          docker restart photosweep-verify
+          sleep 5
+          curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://127.0.0.1:8765/health/ready
+      - name: Container logs
+        if: always()
+        run: docker logs photosweep-verify || true

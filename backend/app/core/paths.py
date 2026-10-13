@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -56,15 +58,18 @@ def _has_child_directories(path: Path) -> bool:
     try:
         with os.scandir(path) as children:
             return any(
-                child.is_dir(follow_symlinks=False) and not child.is_symlink()
-                for child in children
+                child.is_dir(follow_symlinks=False) and not child.is_symlink() for child in children
             )
     except OSError:
         return False
 
 
 def _safe_browsable_directory(raw_path: str) -> tuple[Path, Path]:
+    if "\x00" in raw_path:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "目录路径无效")
     candidate = Path(raw_path).expanduser()
+    if ".." in candidate.parts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "不允许目录路径穿越")
     if not candidate.is_absolute():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "目录路径必须是绝对路径")
     lexical_candidate = Path(os.path.abspath(candidate))
@@ -110,15 +115,11 @@ def list_media_directories(raw_path: str | None = None) -> dict[str, Any]:
                 try:
                     is_symlink = child.is_symlink()
                     is_directory = child.is_dir(follow_symlinks=False)
-                    if not is_directory and not (
-                        is_symlink and child.is_dir(follow_symlinks=True)
-                    ):
+                    if not is_directory and not (is_symlink and child.is_dir(follow_symlinks=True)):
                         continue
                     child_path = Path(child.path)
                     readable = (
-                        is_directory
-                        and not is_symlink
-                        and os.access(child_path, os.R_OK | os.X_OK)
+                        is_directory and not is_symlink and os.access(child_path, os.R_OK | os.X_OK)
                     )
                     entries.append(
                         {
@@ -158,19 +159,101 @@ def list_media_directories(raw_path: str | None = None) -> dict[str, Any]:
     }
 
 
+def _resolve_confined_file(root: Path, relative_path: str, *, must_exist: bool) -> Path:
+    # Inspect lexical components BEFORE resolve: resolve itself follows symlinks.
+    relative = Path(relative_path)
+    if (
+        not relative_path
+        or relative.is_absolute()
+        or relative.drive
+        or ".." in relative.parts
+        or "\x00" in relative_path
+        or relative_path.startswith(("/", "\\"))
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "文件路径越界")
+    root = Path(os.path.abspath(root))
+    current = root
+    for part in ("", *relative.parts):
+        if part:
+            current = current / part
+        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+            raise HTTPException(status.HTTP_409_CONFLICT, "不处理符号链接")
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = current.resolve(strict=must_exist)
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "文件或目录不存在") from exc
+    if not is_relative_to(resolved, resolved_root) or resolved == resolved_root:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "文件路径越界")
+    if must_exist and not stat.S_ISREG(current.stat(follow_symlinks=False).st_mode):
+        raise HTTPException(status.HTTP_409_CONFLICT, "仅允许普通文件")
+    return current
+
+
 def resolve_library_file(root_path: str, relative_path: str, *, must_exist: bool = True) -> Path:
-    root = Path(root_path).resolve(strict=True)
-    candidate = root.joinpath(relative_path).resolve(strict=must_exist)
-    if not is_relative_to(candidate, root):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "媒体路径越界")
-    if must_exist and candidate.is_symlink():
-        raise HTTPException(status.HTTP_409_CONFLICT, "不处理符号链接")
-    return candidate
+    root, _allowed = _safe_browsable_directory(root_path)
+    return _resolve_confined_file(root, relative_path, must_exist=must_exist)
 
 
 def resolve_trash_file(relative_path: str, *, must_exist: bool = True) -> Path:
-    root = get_settings().trash_dir.resolve(strict=True)
-    candidate = root.joinpath(relative_path).resolve(strict=must_exist)
-    if not is_relative_to(candidate, root):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Trash 路径越界")
-    return candidate
+    return _resolve_confined_file(get_settings().trash_dir, relative_path, must_exist=must_exist)
+
+
+@contextmanager
+def secure_parent(path: Path):
+    """Pin Linux directory descriptors; never traverse a replaced symlink parent."""
+    absolute = Path(os.path.abspath(path))
+    if os.name != "posix":
+        for parent in [*reversed(absolute.parents), absolute]:
+            if parent.is_symlink() or (hasattr(parent, "is_junction") and parent.is_junction()):
+                raise OSError("不处理符号链接")
+        yield None, str(absolute)
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:-1]:
+            child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor, absolute.name
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def open_regular_file(path: Path):
+    with secure_parent(path) as (parent, name):
+        descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("仅允许普通文件")
+            with os.fdopen(descriptor, "rb", buffering=0, closefd=False) as handle:
+                yield handle
+        finally:
+            os.close(descriptor)
+
+
+def secure_mkdir_parents(path: Path) -> None:
+    """Create descendants without following a symlink introduced between checks."""
+    absolute = Path(os.path.abspath(path))
+    if os.name != "posix":
+        for current in [*reversed(absolute.parents), absolute]:
+            if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+                raise OSError("不处理符号链接")
+            current.mkdir(exist_ok=True)
+        return
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                os.fsync(descriptor)
+            except FileExistsError:
+                pass
+            child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+    finally:
+        os.close(descriptor)

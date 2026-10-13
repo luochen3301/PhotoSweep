@@ -7,7 +7,7 @@ import {
   SpinnerGap,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Button } from "./ui";
 import { api } from "../lib/api";
@@ -15,10 +15,11 @@ import type { DirectoryListing, DirectoryNode } from "../types";
 
 type DirectoryPickerProps = {
   value?: DirectoryNode;
-  onChange: (directory: DirectoryNode) => void;
+  onChange: (directory?: DirectoryNode) => void;
 };
 
 export function DirectoryPicker({ value, onChange }: DirectoryPickerProps) {
+  const queryClient = useQueryClient();
   const [path, setPath] = useState<string>();
   const directories = useQuery({
     queryKey: ["setup-directories", path ?? "roots"],
@@ -57,6 +58,11 @@ export function DirectoryPicker({ value, onChange }: DirectoryPickerProps) {
             返回上级
           </Button>
         )}
+        <Button type="button" disabled={directories.isFetching} onClick={() => {
+          onChange(undefined);
+          void queryClient.invalidateQueries({ queryKey: ["setup-directories"] });
+          void queryClient.invalidateQueries({ queryKey: ["onboarding"] });
+        }}>重新检测</Button>
       </header>
 
       {directories.isLoading && (
@@ -77,7 +83,7 @@ export function DirectoryPicker({ value, onChange }: DirectoryPickerProps) {
       )}
 
       {!directories.isLoading && !directories.error && (
-        <div className="directory-picker__tree" role="tree">
+        <div className="directory-picker__tree" role="list" aria-label="可用目录">
           {listing?.current?.selectable && (
             <DirectoryRow
               directory={listing.current}
@@ -148,15 +154,14 @@ function DirectoryRow({
         selected ? "is-selected" : "",
         unavailable ? "is-disabled" : "",
       ].join(" ")}
-      role="treeitem"
-      aria-selected={selected}
+      role="listitem"
       aria-disabled={unavailable}
     >
       <button
         type="button"
         className="directory-row__main"
         disabled={unavailable}
-        onClick={() => (directory.has_children ? onOpen(directory) : onSelect(directory))}
+        onClick={() => (directory.has_children ? onOpen(directory) : directory.selectable && onSelect(directory))}
       >
         {unavailable ? <LockSimple size={19} /> : <Folder size={19} weight="fill" />}
         <span>
@@ -175,6 +180,8 @@ function DirectoryRow({
           type="button"
           variant={selected ? "primary" : "default"}
           disabled={!directory.selectable || unavailable}
+          aria-pressed={selected}
+          aria-label={`${selected ? "已选择" : "选择"} ${directory.name}`}
           onClick={() => onSelect(directory)}
         >
           {selected ? "已选择" : "选择"}

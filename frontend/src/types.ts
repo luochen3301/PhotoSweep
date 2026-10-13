@@ -95,13 +95,16 @@ export type TrashItem = {
   media_id?: number;
   filename: string;
   library_name: string;
+  library_id: number;
+  library_writable: boolean;
+  status: string;
   original_relative_path: string;
   size: number;
   category_snapshot: string[];
   moved_at: string;
 };
 
-export type DuplicateMember = Media & { is_keep: boolean; is_hardlink: boolean };
+export type DuplicateMember = Media & { is_keep: boolean; is_default_keep?: boolean; is_hardlink: boolean };
 export type DuplicateGroup = {
   id: number;
   media_type: "photo" | "video";
@@ -110,4 +113,6 @@ export type DuplicateGroup = {
   potential_savings: number;
   sha256: string;
   members: DuplicateMember[];
+  members_total?: number;
+  members_has_more?: boolean;
 };

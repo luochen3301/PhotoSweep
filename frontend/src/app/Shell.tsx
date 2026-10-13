@@ -1,7 +1,6 @@
 import {
   Broom,
   Camera,
-  CaretDown,
   ChatCircleDots,
   Copy,
   FilmStrip,
@@ -15,6 +14,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import type { DashboardSummary, Library } from "../types";
+import { useLibraryScope } from "./LibraryScope";
+import { useEffect } from "react";
 
 const navigation = [
   { to: "/", label: "总览", icon: House },
@@ -31,6 +32,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { libraryId, setLibraryId } = useLibraryScope();
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api<{ username: string }>("/auth/me"),
@@ -40,8 +42,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     queryFn: () => api<Library[]>("/libraries"),
   });
   const summary = useQuery({
-    queryKey: ["summary"],
-    queryFn: () => api<DashboardSummary>("/dashboard/summary"),
+    queryKey: ["summary", libraryId],
+    queryFn: () => api<DashboardSummary>(`/dashboard/summary${libraryId ? `?library_ids=${libraryId}` : ""}`),
   });
   const logout = useMutation({
     mutationFn: () => api("/auth/logout", { method: "POST" }),
@@ -51,7 +53,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       window.location.reload();
     },
   });
-  const activeLibrary = libraries.data?.data[0];
+  const activeLibrary = libraries.data?.data.find((library) => String(library.id) === libraryId);
+  useEffect(() => {
+    if (libraryId && libraries.data && !activeLibrary) setLibraryId("");
+  }, [libraryId, libraries.data, activeLibrary, setLibraryId]);
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -62,16 +67,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <strong>PhotoSweep</strong>
         </button>
         <span className="topbar__divider" />
-        <button
-          className="library-switcher"
-          onClick={() => navigate(activeLibrary ? "/settings" : "/onboarding")}
-        >
+        <label className="library-switcher">
           <span>图库</span>
-          <strong>{activeLibrary?.name ?? "尚未添加"}</strong>
-          <CaretDown size={13} />
-        </button>
+          <select aria-label="当前图库范围" value={libraryId} onChange={(event) => setLibraryId(event.target.value)}>
+            <option value="">全部图库</option>
+            {libraries.data?.data.map((library) => <option key={library.id} value={library.id}>{library.name}{!library.writable ? "（只读）" : ""}</option>)}
+          </select>
+        </label>
         <div className="topbar__spacer" />
-        <button className="account-button" onClick={() => logout.mutate()}>
+        <button className="account-button" aria-label="退出登录" disabled={logout.isPending} onClick={() => logout.mutate()}>
           <span className="avatar">{me.data?.data.username?.slice(0, 1).toUpperCase()}</span>
           <span>{me.data?.data.username}</span>
           <SignOut size={16} />
@@ -89,6 +93,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <NavLink
                 key={item.to}
                 to={item.to}
+                aria-label={item.label}
+                title={item.label}
                 end={item.to === "/"}
                 className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}
               >
@@ -102,14 +108,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="sidebar__status">
-          <span className={activeLibrary ? "status-dot ok" : "status-dot"} />
+          <span className={libraries.data?.data.length ? "status-dot ok" : "status-dot"} />
           <div>
-            <strong>{activeLibrary ? "服务运行正常" : "等待添加图库"}</strong>
-            <small>{activeLibrary ? `${libraries.data?.data.length} 个图库` : "继续首次安装"}</small>
+            <strong>{libraries.data?.data.length ? "图库已连接" : "等待添加图库"}</strong>
+            <small>{libraries.data?.data.length ? `${libraries.data.data.length} 个图库` : "继续首次安装"}</small>
           </div>
         </div>
       </aside>
       <main className="workspace">{children}</main>
+      {logout.error && <div role="alert" className="toast-error">{logout.error.message}</div>}
     </div>
   );
 }

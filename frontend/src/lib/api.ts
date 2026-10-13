@@ -43,10 +43,12 @@ export async function api<T>(
     let detail = `请求失败 (${response.status})`;
     try {
       const problem = await response.json();
-      detail = problem.detail ?? detail;
+      if (typeof problem.detail === "string") detail = problem.detail;
+      else if (Array.isArray(problem.detail)) detail = problem.detail.map((item: { msg?: string }) => item.msg ?? "参数不符合要求").join("；");
     } catch {
       // Preserve the useful status-based fallback.
     }
+    if (response.status === 401 && !["/auth/login", "/auth/me", "/setup/admin"].includes(path)) window.dispatchEvent(new Event("photosweep:session-expired"));
     throw new ApiError(response.status, detail);
   }
   return response.json();
@@ -60,9 +62,14 @@ export function formatBytes(bytes: number): string {
   return `${value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
 }
 
+export function mediaThumbnailUrl(media: { id: number; size: number; mtime_ns: number }, size: 256 | 512 = 512): string {
+  return `/api/v1/media/${media.id}/thumbnail?size=${size}&v=${media.size}-${media.mtime_ns}`;
+}
+
 export function formatDate(value?: string | number): string {
   if (!value) return "未知";
   const date = typeof value === "number" ? new Date(value / 1_000_000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知";
   return new Intl.DateTimeFormat("zh-CN", {
     year: "numeric",
     month: "2-digit",

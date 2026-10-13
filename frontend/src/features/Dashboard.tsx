@@ -10,7 +10,11 @@ import {
 } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Button, EmptyState } from "../components/ui";
+import { useState } from "react";
+import { Button, EmptyState, ErrorState } from "../components/ui";
+import { JobProgress } from "../components/JobProgress";
+import { useLibraryScope } from "../app/LibraryScope";
+import { jobFinished, lastScanJob, rememberScanJob, useJob } from "../lib/useJob";
 import { api, formatBytes, formatDate } from "../lib/api";
 import type { DashboardSummary, Job, Library } from "../types";
 
@@ -25,13 +29,16 @@ const cards = [
 export function Dashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { libraryId } = useLibraryScope();
+  const [jobId, setJobId] = useState<number | undefined>(lastScanJob);
+  const job = useJob(jobId);
   const libraries = useQuery({
     queryKey: ["libraries"],
     queryFn: () => api<Library[]>("/libraries"),
   });
   const summary = useQuery({
-    queryKey: ["summary"],
-    queryFn: () => api<DashboardSummary>("/dashboard/summary"),
+    queryKey: ["summary", libraryId],
+    queryFn: () => api<DashboardSummary>(`/dashboard/summary${libraryId ? `?library_ids=${libraryId}` : ""}`),
   });
   const scan = useMutation({
     mutationFn: (libraryId: number) =>
@@ -39,15 +46,11 @@ export function Dashboard() {
         method: "POST",
         body: { mode: "incremental" },
       }),
-    onSuccess: () => {
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["summary"] });
-        queryClient.invalidateQueries({ queryKey: ["libraries"] });
-      }, 1200);
-    },
+    onSuccess: (response) => { setJobId(response.data.id); rememberScanJob(response.data.id); void queryClient.invalidateQueries({ queryKey: ["libraries"] }); },
   });
-  const library = libraries.data?.data[0];
-  if (!libraries.isLoading && !library) {
+  const library = libraries.data?.data.find((item) => String(item.id) === libraryId) ?? (libraries.data?.data.length === 1 ? libraries.data.data[0] : undefined);
+  if (libraries.error) return <section className="page"><ErrorState error={libraries.error} retry={() => libraries.refetch()} /></section>;
+  if (!libraries.isLoading && libraries.data?.data.length === 0) {
     return (
       <section className="page page--center">
         <EmptyState
@@ -74,19 +77,22 @@ export function Dashboard() {
           <p>
             {library
               ? `${library.name} · 上次扫描 ${formatDate(library.last_scan_at)}`
-              : "正在读取图库…"}
+              : libraries.isLoading ? "正在读取图库…" : `全部 ${libraries.data?.data.length} 个图库`}
           </p>
         </div>
         <Button
           variant="primary"
-          disabled={!library || scan.isPending}
-          onClick={() => library && scan.mutate(library.id)}
+          disabled={Boolean(library && !library.enabled) || scan.isPending || Boolean(jobId && !job.error && !jobFinished(job.data?.data))}
+          title={library && !library.enabled ? "请先在设置中启用此图库" : undefined}
+          onClick={() => library ? scan.mutate(library.id) : navigate("/settings")}
         >
           <Play weight="fill" size={15} />
-          {scan.isPending ? "正在创建扫描…" : "开始增量扫描"}
+          {scan.isPending ? "正在创建扫描…" : library ? "开始增量扫描" : "管理图库与扫描"}
         </Button>
       </header>
       {scan.error && <div className="inline-error">{scan.error.message}</div>}
+      {summary.error && <ErrorState error={summary.error} retry={() => summary.refetch()} />}
+      <JobProgress jobId={jobId} />
       <div className="library-totals">
         <div>
           <span>照片</span>

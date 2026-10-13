@@ -12,6 +12,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 
+@pytest.fixture(autouse=True)
+def allow_test_library_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "allowed_media_roots", [tmp_path])
+
+
 def session() -> Session:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -33,7 +33,7 @@ def hash_password(password: str) -> str:
 def verify_password(password_hash: str, password: str) -> bool:
     try:
         return password_hasher.verify(password_hash, password)
-    except VerifyMismatchError:
+    except (VerificationError, InvalidHashError):
         return False
 
 
@@ -89,8 +89,11 @@ def current_session(
     admin = db.get(AdminAccount, session.admin_id)
     if admin is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "管理员不存在")
-    session.last_seen_at = datetime.now(timezone.utc)
-    db.commit()
+    now = datetime.now(timezone.utc)
+    seen = session.last_seen_at.replace(tzinfo=timezone.utc)
+    if now - seen >= timedelta(minutes=5):
+        session.last_seen_at = now
+        db.commit()
     return session, admin
 
 
@@ -134,15 +137,24 @@ class LoginLimiter:
     def check(self, key: str) -> None:
         now = time.monotonic()
         with self._lock:
+            for old_key in list(self._records):
+                if (
+                    not self._records[old_key]
+                    or now - self._records[old_key][-1] > self.window_seconds
+                ):
+                    del self._records[old_key]
+            if key not in self._records and len(self._records) >= 10000:
+                raise HTTPException(429, "请求过多，请稍后再试")
             queue = self._records[key]
             while queue and now - queue[0] > self.window_seconds:
                 queue.popleft()
             if len(queue) >= self.attempts:
                 raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "登录尝试过多，请稍后再试")
+            # Reserve before expensive password verification; concurrent requests count too.
+            queue.append(now)
 
     def fail(self, key: str) -> None:
-        with self._lock:
-            self._records[key].append(time.monotonic())
+        pass  # check() already records the attempt atomically.
 
     def success(self, key: str) -> None:
         with self._lock:
@@ -150,3 +162,4 @@ class LoginLimiter:
 
 
 login_limiter = LoginLimiter()
+reauth_limiter = LoginLimiter()

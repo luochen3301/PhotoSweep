@@ -4,7 +4,7 @@ import queue
 import threading
 from datetime import datetime, timezone
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.database import SessionLocal
 from app.models import Job
@@ -17,8 +17,11 @@ class JobRunner:
         self._queue: queue.Queue[int | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._active_job_id: int | None = None
 
     def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
         with SessionLocal() as db:
             db.execute(
                 update(Job)
@@ -27,17 +30,25 @@ class JobRunner:
                     status="interrupted",
                     phase="容器重启导致任务中断",
                     finished_at=datetime.now(timezone.utc),
+                    progress_seq=Job.progress_seq + 1,
                 )
             )
             db.commit()
-        if self._thread and self._thread.is_alive():
-            return
+            # Queue state is persisted in SQLite, not the in-memory wake-up mechanism.
+            for job_id in db.scalars(select(Job.id).where(Job.status == "queued").order_by(Job.id)):
+                self._queue.put(job_id)
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="photosweep-jobs", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._active_job_id is not None:
+            with SessionLocal() as db:
+                db.execute(
+                    update(Job).where(Job.id == self._active_job_id).values(cancel_requested=True)
+                )
+                db.commit()
         self._queue.put(None)
         if self._thread:
             self._thread.join(timeout=5)
@@ -57,6 +68,14 @@ class JobRunner:
             job = db.get(Job, job_id)
             if job is None or job.status != "queued":
                 return
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.phase = "已取消"
+                job.finished_at = datetime.now(timezone.utc)
+                job.progress_seq += 1
+                db.commit()
+                return
+            self._active_job_id = job.id
             job.status = "running"
             job.started_at = datetime.now(timezone.utc)
             job.heartbeat_at = datetime.now(timezone.utc)
@@ -77,6 +96,9 @@ class JobRunner:
                     job.status = "completed"
                     job.phase = "已完成"
                 job.result = result
+                if self._stop.is_set():
+                    job.status = "interrupted"
+                    job.phase = "服务停止导致任务中断"
             except Exception as exc:
                 db.rollback()
                 job = db.get(Job, job_id)
@@ -88,6 +110,7 @@ class JobRunner:
                 job.progress_seq += 1
                 job.finished_at = datetime.now(timezone.utc)
                 db.commit()
+            self._active_job_id = None
 
 
 job_runner = JobRunner()

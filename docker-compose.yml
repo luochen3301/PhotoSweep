@@ -15,9 +15,11 @@ services:
       PHOTOSWEEP_TRASH_DIR: /trash
       PHOTOSWEEP_ALLOWED_MEDIA_ROOTS: /media
       PHOTOSWEEP_COOKIE_SECURE: "${PHOTOSWEEP_COOKIE_SECURE:-false}"
+      PHOTOSWEEP_PUBLIC_ORIGIN: "${PHOTOSWEEP_PUBLIC_ORIGIN:-}"
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-127.0.0.1}"
       TZ: "${TZ:-Pacific/Auckland}"
     volumes:
-      - "${PHOTOS_PATH:-./sample-media}:/media/photos"
+      - "${PHOTOS_PATH:-./sample-media}:/media/photos:${PHOTOS_MODE:-ro}"
       - "${PHOTOSWEEP_DATA_PATH:-./data}:/app/data"
       - "${PHOTOSWEEP_CACHE_PATH:-./cache}:/app/cache"
       - "${PHOTOSWEEP_TRASH_PATH:-./trash}:/trash"

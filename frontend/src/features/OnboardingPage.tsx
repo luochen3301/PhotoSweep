@@ -16,8 +16,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { DirectoryPicker } from "../components/DirectoryPicker";
-import { Button, Input } from "../components/ui";
+import { Button, ErrorState, Input } from "../components/ui";
 import { api } from "../lib/api";
+import { rememberScanJob, useJob } from "../lib/useJob";
 import type { DirectoryNode, Job, Library, OnboardingStatus } from "../types";
 
 const steps = ["开始", "选择目录", "创建 Library", "首次扫描"];
@@ -32,6 +33,7 @@ export function OnboardingPage() {
   const [library, setLibrary] = useState<Library>();
   const [jobId, setJobId] = useState<number>();
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
   const onboarding = useQuery({
     queryKey: ["onboarding"],
     queryFn: () => api<OnboardingStatus>("/setup/onboarding"),
@@ -65,20 +67,10 @@ export function OnboardingPage() {
         method: "POST",
         body: { mode: "full" },
       }),
-    onSuccess: (response) => setJobId(response.data.id),
+    onSuccess: (response) => { setJobId(response.data.id); rememberScanJob(response.data.id); },
   });
-  const job = useQuery({
-    queryKey: ["job", jobId],
-    queryFn: () => api<Job>(`/jobs/${jobId}`),
-    enabled: Boolean(jobId),
-    refetchInterval: (query) =>
-      query.state.data &&
-      ["completed", "failed", "cancelled", "interrupted"].includes(
-        query.state.data.data.status,
-      )
-        ? false
-        : 800,
-  });
+  const job = useJob(jobId);
+  const cancel = useMutation({ mutationFn: () => api(`/jobs/${jobId}/cancel`, { method: "POST" }) });
   const status = onboarding.data?.data;
   const scanJob = job.data?.data;
   const finished = scanJob?.status === "completed";
@@ -87,9 +79,11 @@ export function OnboardingPage() {
   const errors = useMemo(() => Number(scanJob?.result?.errors ?? 0), [scanJob?.result]);
 
   async function copyMountExample() {
-    await navigator.clipboard.writeText(mountExample);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    try {
+      await navigator.clipboard.writeText(mountExample);
+      setCopied(true); setCopyError("");
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch { setCopyError("当前浏览器不允许自动复制，请选中下方映射示例手动复制。"); }
   }
 
   function submitLibrary(event: FormEvent) {
@@ -105,6 +99,7 @@ export function OnboardingPage() {
       </div>
     );
   }
+  if (onboarding.error) return <div className="onboarding-page"><ErrorState error={onboarding.error} retry={() => onboarding.refetch()} /></div>;
 
   if (status?.has_library && !library) {
     return (
@@ -165,6 +160,8 @@ export function OnboardingPage() {
         </aside>
 
         <section className="onboarding-card">
+          {dismiss.error && <ErrorState error={dismiss.error} />}
+          {copyError && <div className="inline-error" role="alert">{copyError}</div>}
           {step === 0 && (
             <div className="onboarding-welcome">
               <span className="onboarding-hero-icon"><HardDrives size={34} /></span>
@@ -253,7 +250,7 @@ export function OnboardingPage() {
               {!directory.writable && (
                 <div className="onboarding-readonly-note">
                   <Info size={18} />
-                  <p><strong>这个目录为只读。</strong>扫描与审核可正常使用；移入回收站、恢复和永久删除会保持禁用。</p>
+                  <p><strong>这个目录为只读。</strong>扫描与审核可正常使用；不能从该目录移出文件，也不能向它恢复文件。</p>
                 </div>
               )}
               {createLibrary.error && <div className="form-error">{createLibrary.error.message}</div>}
@@ -274,7 +271,7 @@ export function OnboardingPage() {
             <div>
               <header className="onboarding-section-heading">
                 <p className="eyebrow">步骤 4 / 4</p>
-                <h1>{finished ? "首次扫描完成" : "准备首次扫描"}</h1>
+                <h1>{finished ? "首次扫描完成" : jobId ? terminalFailure ? "首次扫描未完成" : "正在首次扫描" : "准备首次扫描"}</h1>
                 <p>
                   {finished
                     ? "Library 已建立索引，现在可以进入总览开始审核。"
@@ -298,13 +295,15 @@ export function OnboardingPage() {
                 <div className="onboarding-job" aria-live="polite">
                   <div>
                     <span>{scanJob?.phase ?? "正在准备扫描…"}</span>
-                    <strong>{Math.round(scanJob?.percent ?? 0)}%</strong>
+                    <strong>{scanJob?.percent == null ? "正在统计" : `${Math.round(scanJob.percent)}%`}</strong>
                   </div>
-                  <progress value={scanJob?.percent ?? 1} max={100} />
+                  <progress value={scanJob?.percent ?? undefined} max={100} />
                   <p>
                     已处理 {scanJob?.processed.toLocaleString("zh-CN") ?? 0} 个文件
                     {errors > 0 ? ` · ${errors} 个文件记录了错误` : " · 暂无错误"}
                   </p>
+                  {!finished && !terminalFailure && <Button disabled={cancel.isPending || cancel.isSuccess} onClick={() => cancel.mutate()}>{cancel.isSuccess ? "正在请求取消…" : "取消扫描"}</Button>}
+                  {cancel.error && <ErrorState error={cancel.error} />}
                 </div>
               )}
               {terminalFailure && (
@@ -351,6 +350,7 @@ export function OnboardingPage() {
                     进入总览 <ArrowRight size={16} />
                   </Button>
                 )}
+                {terminalFailure && <Button disabled={startScan.isPending} onClick={() => { cancel.reset(); startScan.mutate(); }}>重试 Full Scan</Button>}
               </footer>
             </div>
           )}

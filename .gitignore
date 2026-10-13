@@ -10,6 +10,8 @@ htmlcov/
 .local/
 node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 data/
 cache/
 trash/

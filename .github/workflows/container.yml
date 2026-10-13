@@ -23,7 +23,10 @@ env:
   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
 jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
   build:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

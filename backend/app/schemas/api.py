@@ -20,16 +20,18 @@ class OnboardingDismissRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class LibraryCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=120)
     root_path: str = Field(min_length=1, max_length=2048)
 
 
 class LibraryUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     name: str | None = Field(default=None, min_length=1, max_length=120)
     enabled: bool | None = None
 
@@ -48,7 +50,7 @@ class ScanRequest(BaseModel):
 
 
 class DuplicateRunRequest(BaseModel):
-    library_ids: list[int] = Field(min_length=1)
+    library_ids: list[int] = Field(min_length=1, max_length=100)
     media_type: Literal["photo", "video", "both"] = "both"
 
     @field_validator("library_ids")

@@ -3,7 +3,6 @@ import {
   Check,
   CheckCircle,
   Funnel,
-  ImageBroken,
   Info,
   ShieldCheck,
   Trash,
@@ -12,9 +11,14 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Button, EmptyState } from "../components/ui";
-import { api, formatBytes, formatDate } from "../lib/api";
-import type { Media } from "../types";
+import { Button, EmptyState, ErrorState } from "../components/ui";
+import { Thumbnail } from "../components/Thumbnail";
+import { JobProgress } from "../components/JobProgress";
+import { rememberScanJob } from "../lib/useJob";
+import { useLibraryScope } from "../app/LibraryScope";
+import { MAX_SELECTION, nextPage, selectLoaded, toggleSelection } from "../lib/selection";
+import { api, formatBytes, formatDate, mediaThumbnailUrl } from "../lib/api";
+import type { Job, Media } from "../types";
 
 type Category = "screenshot" | "screen_recording" | "app_image";
 type Sort = "newest" | "oldest" | "largest" | "smallest";
@@ -78,29 +82,17 @@ function MediaTile({
   onOpen: () => void;
   onSelect: () => void;
 }) {
-  const [failed, setFailed] = useState(false);
   return (
-    <button
+    <div
       className={`media-tile ${active ? "active" : ""} ${selected ? "selected" : ""}`}
-      onClick={onOpen}
-      aria-label={`查看 ${media.filename}`}
     >
-      {failed ? (
-        <span className="media-tile__failed">
-          <ImageBroken size={24} />
-          <small>无法预览</small>
-        </span>
-      ) : (
-        <img
-          src={`/api/v1/media/${media.id}/thumbnail?size=512`}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      )}
-      <span
+      <button className="media-tile__open" onClick={onOpen} aria-label={`查看 ${media.filename}`}>
+        <Thumbnail src={mediaThumbnailUrl(media)} />
+      </button>
+      <button
         role="checkbox"
         aria-checked={selected}
+        aria-label={`选择 ${media.filename}`}
         className="media-check"
         onClick={(event) => {
           event.stopPropagation();
@@ -108,16 +100,21 @@ function MediaTile({
         }}
       >
         {selected && <Check size={14} weight="bold" />}
-      </span>
+      </button>
       <span className="media-tile__caption">
         <strong>{media.filename}</strong>
         <small>{formatBytes(media.size)}</small>
       </span>
-    </button>
+    </div>
   );
 }
 
 function Inspector({ media, category, onClose }: { media?: Media; category: Category; onClose: () => void }) {
+  const [jobId, setJobId] = useState<number>();
+  const rescan = useMutation({
+    mutationFn: () => api<Job>(`/media/${media?.id}/rescan`, { method: "POST" }),
+    onSuccess: (response) => { setJobId(response.data.id); rememberScanJob(response.data.id); },
+  });
   if (!media) {
     return (
       <aside className="inspector inspector--empty">
@@ -137,13 +134,16 @@ function Inspector({ media, category, onClose }: { media?: Media; category: Cate
         </button>
       </header>
       <div className="inspector__preview">
-        <img src={`/api/v1/media/${media.id}/thumbnail?size=512`} alt="" />
+        <Thumbnail src={mediaThumbnailUrl(media)} />
       </div>
       <dl className="metadata">
         <div>
           <dt>图库</dt>
-          <dd>{media.library_name}</dd>
+          <dd>{media.library_name}{!media.library_writable && " · 只读"}</dd>
         </div>
+        <div><dt>分类</dt><dd>{media.classifications.map((item) => `${item.category === "screenshot" ? "截图" : item.category === "screen_recording" ? "屏幕录制" : `App 图片 ${item.app_source ?? ""}`}（${item.decision === "keep" ? "已保留" : "待审核"}）`).join(" · ")}</dd></div>
+        {media.camera_model && <div><dt>相机</dt><dd>{media.camera_make} {media.camera_model}</dd></div>}
+        {media.codec && <div><dt>编码 / 帧率</dt><dd>{media.codec} / {media.fps ?? "未知"} FPS</dd></div>}
         <div>
           <dt>路径</dt>
           <dd title={media.relative_path}>{media.relative_path}</dd>
@@ -167,6 +167,10 @@ function Inspector({ media, category, onClose }: { media?: Media; category: Cate
           </div>
         )}
       </dl>
+      {media.metadata_error && <div className="inline-error">元数据读取错误：{media.metadata_error}</div>}
+      <Button onClick={() => rescan.mutate()} disabled={rescan.isPending}>重新读取此文件</Button>
+      {rescan.error && <ErrorState error={rescan.error} />}
+      <JobProgress jobId={jobId} />
       {classification && (
         <section className="evidence">
           <div className="confidence">
@@ -193,16 +197,22 @@ function Inspector({ media, category, onClose }: { media?: Media; category: Cate
 }
 
 export function Cleanup({ category }: { category: Category }) {
+  const { libraryId } = useLibraryScope();
+  return <CleanupView key={`${category}:${libraryId}`} category={category} libraryId={libraryId} />;
+}
+
+function CleanupView({ category, libraryId }: { category: Category; libraryId: string }) {
   const copy = pageCopy[category];
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<Sort>("newest");
   const [appSource, setAppSource] = useState<string>("");
+  const [reviewState, setReviewState] = useState<"review" | "keep">("review");
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [activeId, setActiveId] = useState<number>();
   const scrollRef = useRef<HTMLDivElement>(null);
   const columns = useColumns();
   const mediaQuery = useInfiniteQuery({
-    queryKey: ["media", category, sort, appSource],
+    queryKey: ["media", category, sort, appSource, reviewState, libraryId],
     initialPageParam: 1,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({
@@ -210,15 +220,14 @@ export function Cleanup({ category }: { category: Category }) {
         sort,
         page: String(pageParam),
         limit: "100",
+        decision: reviewState,
       });
       if (copy.mediaType) params.set("type", copy.mediaType);
       if (appSource) params.set("app_source", appSource);
+      if (libraryId) params.set("library_ids", libraryId);
       return api<Media[]>(`/media?${params}`);
     },
-    getNextPageParam: (lastPage) => {
-      const page = Number(lastPage.meta.page);
-      return page < Number(lastPage.meta.pages) ? page + 1 : undefined;
-    },
+    getNextPageParam: (lastPage) => nextPage(lastPage.meta),
   });
   const items = useMemo(
     () => mediaQuery.data?.pages.flatMap((page) => page.data) ?? [],
@@ -244,7 +253,7 @@ export function Cleanup({ category }: { category: Category }) {
     mutationFn: () =>
       api("/media/batch-decision", {
         method: "POST",
-        body: { media_ids: [...selection], category, decision: "keep" },
+        body: { media_ids: [...selection], category, decision: reviewState === "review" ? "keep" : "review" },
       }),
     onSuccess: () => {
       setSelection(new Set());
@@ -264,17 +273,18 @@ export function Cleanup({ category }: { category: Category }) {
       queryClient.invalidateQueries({ queryKey: ["media"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       queryClient.invalidateQueries({ queryKey: ["trash"] });
+      queryClient.invalidateQueries({ queryKey: ["duplicate-groups"] });
+    },
+    onError: () => {
+      setSelection(new Set());
+      for (const key of ["media", "summary", "trash", "file-operations"]) void queryClient.invalidateQueries({ queryKey: [key] });
     },
   });
 
   function toggle(id: number) {
-    setSelection((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setSelection((current) => toggleSelection(current, id));
   }
+  function clearSelection() { setSelection(new Set()); setActiveId(undefined); }
 
   return (
     <section className="review-page">
@@ -283,7 +293,7 @@ export function Cleanup({ category }: { category: Category }) {
           <div>
             <h1>{copy.title}</h1>
             <p>
-              {total.toLocaleString("zh-CN")} 项 · 已加载 {items.length} 项
+              {total.toLocaleString("zh-CN")} 项 · {formatBytes(Number(mediaQuery.data?.pages[0]?.meta.total_bytes ?? 0))} · 已加载 {items.length} 项
             </p>
           </div>
           <div className="review-tools">
@@ -291,19 +301,20 @@ export function Cleanup({ category }: { category: Category }) {
               <Funnel size={16} />
               <span className="sr-only">筛选</span>
               {category === "app_image" ? (
-                <select value={appSource} onChange={(event) => setAppSource(event.target.value)}>
+                <select aria-label="App 来源" value={appSource} onChange={(event) => { clearSelection(); setAppSource(event.target.value); }}>
                   <option value="">全部来源</option>
                   <option value="WeChat">微信</option>
                   <option value="QQ">QQ</option>
                   <option value="Other">其他</option>
                 </select>
               ) : (
-                <span>待审核</span>
+                <span>审核状态</span>
               )}
             </label>
+            <label className="select-control"><select aria-label="审核状态" value={reviewState} onChange={(event) => { clearSelection(); setReviewState(event.target.value as "review" | "keep"); }}><option value="review">待审核</option><option value="keep">已保留</option></select></label>
             <label className="select-control">
               <ArrowsDownUp size={16} />
-              <select value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
+              <select aria-label="排序" value={sort} onChange={(event) => { clearSelection(); setSort(event.target.value as Sort); }}>
                 <option value="newest">最新优先</option>
                 <option value="oldest">最早优先</option>
                 <option value="largest">最大优先</option>
@@ -313,23 +324,23 @@ export function Cleanup({ category }: { category: Category }) {
           </div>
         </header>
         <div className="review-context">
-          <span>{copy.description}</span>
+          <span>{copy.description} 每次最多选择 {MAX_SELECTION} 项。</span>
           {items.length > 0 && (
             <button
-              onClick={() => setSelection(new Set(items.map((item) => item.id)))}
-              disabled={selection.size === items.length}
+              onClick={() => setSelection(selectLoaded(items))}
+              disabled={selection.size === Math.min(items.length, MAX_SELECTION)}
             >
               选择已加载项目
             </button>
           )}
         </div>
-        {mediaQuery.isLoading ? (
+        {mediaQuery.isError ? <ErrorState error={mediaQuery.error} retry={() => mediaQuery.refetch()} /> : mediaQuery.isLoading ? (
           <div className="grid-loading">正在读取媒体索引…</div>
         ) : items.length === 0 ? (
           <EmptyState
             icon={<CheckCircle size={32} />}
-            title={copy.empty}
-            description="扫描后符合规则且尚未标记为“保留”的项目会显示在这里。"
+            title={reviewState === "keep" ? "没有已保留的项目" : copy.empty}
+            description="扫描后符合规则的项目会显示在这里。已保留的决定在文件未改变时持续有效。"
           />
         ) : (
           <div className="media-scroll" ref={scrollRef}>
@@ -377,7 +388,7 @@ export function Cleanup({ category }: { category: Category }) {
           </div>
         )}
       </div>
-      <Inspector media={active} category={category} onClose={() => setActiveId(undefined)} />
+      <Inspector key={activeId} media={active} category={category} onClose={() => setActiveId(undefined)} />
       {selection.size > 0 && (
         <div className="selection-bar">
           <span className="selection-bar__check">
@@ -389,8 +400,9 @@ export function Cleanup({ category }: { category: Category }) {
           <div />
           <Button onClick={() => decision.mutate()} disabled={decision.isPending || move.isPending}>
             <ShieldCheck size={16} />
-            保留
+            {reviewState === "review" ? "保留" : "恢复待审核"}
           </Button>
+          {hasReadOnlySelection && <small className="selection-note">含只读图库：仅可审核，不能移动</small>}
           <Button
             variant="primary"
             onClick={() => move.mutate()}

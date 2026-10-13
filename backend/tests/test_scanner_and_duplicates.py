@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from app.database import Base
 from app.models import Classification, DuplicateRun, Job, Library, MediaFile
 from app.scanner import scan_library
@@ -9,6 +11,13 @@ from app.services.duplicates import run_duplicate_detection
 from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+
+
+@pytest.fixture(autouse=True)
+def allowed_test_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "app.core.paths.get_settings", lambda: SimpleNamespace(allowed_media_roots=[tmp_path])
+    )
 
 
 def memory_session() -> Session:

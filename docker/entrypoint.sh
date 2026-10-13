@@ -28,9 +28,7 @@ mkdir -p "$data_dir" "$cache_dir" "$trash_dir"
 
 if [ "$(id -u)" = "0" ]; then
   chown -R "$puid:$pgid" "$data_dir" "$cache_dir" "$trash_dir"
-  gosu "$puid:$pgid" alembic upgrade head
   exec gosu "$puid:$pgid" "$@"
 fi
 
-alembic upgrade head
 exec "$@"

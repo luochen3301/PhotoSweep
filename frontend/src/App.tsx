@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthGate } from "./app/AuthGate";
+import { LibraryScopeProvider } from "./app/LibraryScope";
+import { ErrorState } from "./components/ui";
 import { Shell } from "./app/Shell";
 import { Cleanup } from "./features/Cleanup";
 import { Dashboard } from "./features/Dashboard";
@@ -14,7 +16,7 @@ import type { OnboardingStatus } from "./types";
 export function App() {
   return (
     <AuthGate>
-      <AuthenticatedApp />
+      <LibraryScopeProvider><AuthenticatedApp /></LibraryScopeProvider>
     </AuthGate>
   );
 }
@@ -29,6 +31,7 @@ function AuthenticatedApp() {
   if (onboarding.isLoading) {
     return <div className="app-loading">正在检查安装状态…</div>;
   }
+  if (onboarding.error) return <div className="app-loading"><ErrorState error={onboarding.error} retry={() => onboarding.refetch()} /></div>;
 
   if (location.pathname === "/onboarding") {
     return <OnboardingPage />;

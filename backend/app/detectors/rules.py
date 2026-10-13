@@ -26,10 +26,37 @@ RECORDING_PATH = re.compile(
     r"(^|[/\\])(screen[\s_-]?recordings?|屏幕录制|录屏)([/\\]|$)", re.IGNORECASE
 )
 APP_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("WeChat", re.compile(r"(micromsg|wechat|weixin|mmexport|wx_camera|微信)", re.IGNORECASE)),
-    ("QQ", re.compile(r"(mobileqq|qq_images?|qqfile|腾讯qq|qq空间)", re.IGNORECASE)),
-    ("Other", re.compile(r"(telegram|whatsapp|messenger|signal|line[/\\])", re.IGNORECASE)),
+    (
+        "WeChat",
+        re.compile(
+            r"(^|[/\\])(micromsg|wechat|weixin|微信)([/\\]|$)|"
+            r"(^|[/\\])(mmexport\d+|wx_camera[_\d-])",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "QQ",
+        re.compile(
+            r"(^|[/\\])(mobileqq|qq_images?|qqfile|腾讯qq|qq空间)([/\\]|$)|"
+            r"(^|[/\\])(qq_pic_merged_|qq图片\d+|qqphoto[_\d])",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Other",
+        re.compile(
+            r"(^|[/\\])(telegram|whatsapp(?: images)?|messenger|signal|line)([/\\]|$)|"
+            r"(^|[/\\])IMG-\d{8}-WA\d+",
+            re.IGNORECASE,
+        ),
+    ),
 ]
+
+DETECTOR_VERSIONS = {
+    "screenshot": "screenshot-v2",
+    "screen_recording": "recording-v2",
+    "app_image": "app-image-v2",
+}
 
 
 def screenshot_detection(
@@ -55,6 +82,7 @@ def screenshot_detection(
         reasons.append("无相机 EXIF")
     else:
         score -= 40
+        reasons.append("包含相机 EXIF，降低截图置信度")
     if width and height:
         short, long = sorted((width, height))
         ratio = long / max(short, 1)
@@ -66,8 +94,9 @@ def screenshot_detection(
             reasons.append("尺寸符合长截图特征")
     if extension.lower() in {".png", ".webp", ".heic", ".heif"}:
         score += 5
+        reasons.append("格式符合常见截图格式")
     if score >= 60:
-        return Detection("screenshot", min(score, 100), reasons, "screenshot-v1")
+        return Detection("screenshot", min(score, 100), reasons, DETECTOR_VERSIONS["screenshot"])
     return None
 
 
@@ -79,6 +108,8 @@ def screen_recording_detection(
     height: int | None,
     fps: float | None,
     codec: str | None,
+    camera_make: str | None = None,
+    camera_model: str | None = None,
 ) -> Detection | None:
     score = 0
     reasons: list[str] = []
@@ -100,8 +131,13 @@ def screen_recording_detection(
     if codec and codec.lower() in {"h264", "hevc", "av1", "vp9"}:
         score += 5
         reasons.append("视频编码符合常见手机录屏")
+    if camera_make or camera_model:
+        score -= 40
+        reasons.append("包含相机信息，降低录屏置信度")
     if score >= 60:
-        return Detection("screen_recording", min(score, 100), reasons, "recording-v1")
+        return Detection(
+            "screen_recording", min(score, 100), reasons, DETECTOR_VERSIONS["screen_recording"]
+        )
     return None
 
 
@@ -114,7 +150,7 @@ def app_image_detection(filename: str, relative_path: str) -> Detection | None:
                 "app_image",
                 92 if source in {"WeChat", "QQ"} else 82,
                 [f"文件名或目录符合 {label} 保存规则"],
-                "app-image-v1",
+                DETECTOR_VERSIONS["app_image"],
                 source,
             )
     return None
@@ -157,6 +193,8 @@ def detect_media(
             height=height,
             fps=fps,
             codec=codec,
+            camera_make=camera_make,
+            camera_model=camera_model,
         )
         if recording:
             detections.append(recording)

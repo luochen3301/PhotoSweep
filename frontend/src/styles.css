@@ -25,6 +25,25 @@
   --inspector: 324px;
 }
 
+.media-tile__open { width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.media-tile__caption { pointer-events: none; }
+.library-switcher select { max-width: 230px; min-width: 90px; border: 0; padding: 7px; border-radius: 5px; color: var(--text); background: var(--surface-2); }
+.muted-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.inline-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.selection-note { color: var(--warning); font-size: 11px; }
+.instance-settings { display: flex; align-items: end; gap: 20px; flex-wrap: wrap; padding: 20px; }
+.instance-settings label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; }
+.instance-settings .input { max-width: 180px; }
+.instance-settings [role="status"] { color: var(--accent); font-size: 12px; }
+.operation-issues { border-color: var(--warning); }
+.operation-issues > p, .operation-issues ul { margin: 16px 20px; }
+.operation-issues ul { padding: 0; list-style: none; }
+.operation-issues li { display: grid; gap: 6px; border-top: 1px solid var(--border); padding: 14px 0; font-size: 12px; }
+.operation-issues li > span { color: var(--muted); }
+.operation-issues li > p { color: var(--warning); margin: 0; overflow-wrap: anywhere; }
+.trash-thumbnail { width: 54px; height: 54px; overflow: hidden; border-radius: 4px; background: var(--surface-3); }
+.trash-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+
 * {
   box-sizing: border-box;
 }
@@ -190,6 +209,8 @@ a:focus-visible {
 
 .auth-page {
   min-height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
   display: grid;
   grid-template-columns: minmax(320px, 1fr) minmax(480px, 44%);
   background: var(--bg);
@@ -1043,8 +1064,8 @@ a:focus-visible {
   bottom: 0;
   left: var(--sidebar);
   min-height: 74px;
-  display: grid;
-  grid-template-columns: auto auto auto auto 1fr auto auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 12px 22px;
@@ -1052,6 +1073,7 @@ a:focus-visible {
   background: #111619;
   z-index: 30;
 }
+.selection-bar > div { flex: 1; }
 
 .selection-bar--page {
   left: var(--sidebar);
@@ -1393,12 +1415,13 @@ progress::-webkit-progress-value {
 .library-row {
   min-height: 79px;
   display: grid;
-  grid-template-columns: 44px minmax(220px, 1fr) 200px auto;
+  grid-template-columns: 44px minmax(140px, 1fr) 150px;
   align-items: center;
   gap: 13px;
   padding: 11px 16px;
   border-bottom: 1px solid var(--border-soft);
 }
+.library-actions { grid-column: 2 / -1; flex-wrap: wrap; }
 
 .library-row:last-child {
   border-bottom: 0;
@@ -1567,6 +1590,8 @@ progress::-webkit-progress-value {
   border-radius: 8px;
   background: #171c20;
   box-shadow: 0 24px 80px rgb(0 0 0 / 52%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
 }
 
 .modal > header {
@@ -1860,6 +1885,7 @@ progress::-webkit-progress-value {
 
 .onboarding-page {
   min-height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   color: var(--text);
   background: #0b0e10;
@@ -2394,13 +2420,12 @@ progress::-webkit-progress-value {
   .sidebar .nav-item span,
   .sidebar .nav-item em,
   .sidebar__status,
-  .topbar__divider,
-  .library-switcher {
+  .topbar__divider {
     display: none;
   }
 
   .topbar__brand {
-    margin-right: 0;
+    margin-right: 12px;
   }
 
   .sidebar {
@@ -2426,8 +2451,9 @@ progress::-webkit-progress-value {
   }
 
   .library-row {
-    grid-template-columns: 44px minmax(180px, 1fr) auto;
+    grid-template-columns: 44px minmax(180px, 1fr);
   }
+  .library-actions { grid-column: 1 / -1; flex-wrap: wrap; }
 
   .library-state {
     display: none;
@@ -2541,6 +2567,7 @@ progress::-webkit-progress-value {
     position: relative;
     min-height: calc(100vh - var(--topbar));
     grid-template-columns: 1fr;
+    height: calc(100dvh - var(--topbar));
   }
 
   .review-header {
@@ -2549,31 +2576,56 @@ progress::-webkit-progress-value {
   }
 
   .review-context {
-    display: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 16px;
   }
 
   .review-main {
     min-height: calc(100vh - var(--topbar));
+    height: 100%;
+    padding-bottom: 80px;
   }
 
   .inspector {
-    display: none;
+    position: fixed;
+    inset: 60px 10px 150px;
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding-bottom: 22px;
+    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 55%);
+    z-index: 60;
   }
+  .inspector--empty { display: none; }
+  .inspector__preview { height: 180px; }
+  .metadata dd { overflow-wrap: anywhere; }
+  .review-tools { flex-wrap: wrap; }
+  .review-header { gap: 10px; padding: 13px 16px; }
 
   .selection-bar {
     right: 10px;
     bottom: 78px;
     left: 10px;
-    grid-template-columns: auto auto 1fr auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
     border: 1px solid var(--border);
     border-radius: 7px;
   }
 
-  .selection-bar > span:not(.selection-bar__check),
-  .selection-bar > button:not(.button),
-  .selection-bar > .button:not(.button--primary) {
-    display: none;
-  }
+  .selection-bar > span:not(.selection-bar__check) { display: none; }
+  .selection-bar > div { display: none; }
+  .selection-bar > button:not(.button) { margin-left: auto; }
+  .selection-bar .button { flex: 1; min-height: 38px; }
+  .selection-note { flex-basis: 100%; }
+  .topbar__brand strong { font-size: 14px; }
+  .library-switcher { display: flex; }
+  .library-switcher > span, .account-button > span:not(.avatar) { display: none; }
+  .library-switcher select { max-width: 135px; }
+  .account-button { padding-inline: 3px; }
 
   .auth-page {
     grid-template-columns: 1fr;
@@ -2604,8 +2656,12 @@ progress::-webkit-progress-value {
   }
 
   .trash-row > span:nth-last-child(-n + 2) {
-    display: none;
+    grid-column: 3;
+    display: grid;
   }
+  .trash-row { gap: 6px 10px; }
+  .trash-row small { white-space: normal; overflow-wrap: anywhere; }
+  .duplicate-actions { flex-wrap: wrap; gap: 12px; }
 
   .library-row {
     grid-template-columns: 38px 1fr;
@@ -2613,6 +2669,7 @@ progress::-webkit-progress-value {
 
   .library-actions {
     grid-column: 1 / -1;
+    flex-wrap: wrap;
   }
 
   .onboarding-topbar {
@@ -2710,4 +2767,10 @@ progress::-webkit-progress-value {
   .onboarding-complete {
     padding: 30px 22px;
   }
+}
+
+@media (max-width: 380px) {
+  .topbar { padding-inline: 10px; }
+  .topbar__brand strong { display: none; }
+  .library-switcher select { max-width: 150px; }
 }

@@ -9,10 +9,12 @@ import {
   Trash,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DirectoryPicker } from "../components/DirectoryPicker";
-import { Button, Input, Modal } from "../components/ui";
+import { Button, ErrorState, Input, Modal } from "../components/ui";
+import { JobProgress } from "../components/JobProgress";
+import { jobFinished, lastScanJob, rememberScanJob, useJob } from "../lib/useJob";
 import { api, formatDate } from "../lib/api";
 import type { DirectoryNode, Job, Library } from "../types";
 
@@ -21,21 +23,14 @@ export function SettingsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [directory, setDirectory] = useState<DirectoryNode>();
-  const [activeJobId, setActiveJobId] = useState<number>();
+  const [activeJobId, setActiveJobId] = useState<number | undefined>(lastScanJob);
+  const [editLibrary, setEditLibrary] = useState<Library>();
+  const [editName, setEditName] = useState("");
   const libraries = useQuery({
     queryKey: ["libraries"],
     queryFn: () => api<Library[]>("/libraries"),
   });
-  const activeJob = useQuery({
-    queryKey: ["job", activeJobId],
-    queryFn: () => api<Job>(`/jobs/${activeJobId}`),
-    enabled: Boolean(activeJobId),
-    refetchInterval: (query) =>
-      query.state.data &&
-      ["completed", "failed", "cancelled", "interrupted"].includes(query.state.data.data.status)
-        ? false
-        : 800,
-  });
+  const activeJob = useJob(activeJobId);
   const create = useMutation({
     mutationFn: () =>
       api<Library>("/libraries", {
@@ -53,22 +48,24 @@ export function SettingsPage() {
   const scan = useMutation({
     mutationFn: ({ id, mode }: { id: number; mode: "full" | "incremental" }) =>
       api<Job>(`/libraries/${id}/scans`, { method: "POST", body: { mode } }),
-    onSuccess: (response) => setActiveJobId(response.data.id),
+    onSuccess: (response) => { setActiveJobId(response.data.id); rememberScanJob(response.data.id); },
   });
   const remove = useMutation({
     mutationFn: (id: number) => api(`/libraries/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["libraries"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["onboarding"] });
+      queryClient.invalidateQueries({ queryKey: ["media"] });
+      queryClient.invalidateQueries({ queryKey: ["duplicate-runs"] });
     },
   });
+  const update = useMutation({
+    mutationFn: ({ id, ...changes }: { id: number; name?: string; enabled?: boolean }) => api(`/libraries/${id}`, { method: "PATCH", body: changes }),
+    onSuccess: () => { setEditLibrary(undefined); void queryClient.invalidateQueries({ queryKey: ["libraries"] }); },
+  });
   const job = activeJob.data?.data;
-  useEffect(() => {
-    if (job && ["completed", "failed", "cancelled"].includes(job.status)) {
-      queryClient.invalidateQueries({ queryKey: ["libraries"] });
-      queryClient.invalidateQueries({ queryKey: ["summary"] });
-    }
-  }, [job?.status, queryClient]);
+  const scanning = Boolean(activeJobId && !activeJob.error && !jobFinished(job));
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -94,6 +91,7 @@ export function SettingsPage() {
           添加 Library
         </Button>
       </header>
+      {libraries.error && <ErrorState error={libraries.error} retry={() => libraries.refetch()} />}
       <section className="settings-section">
         <header>
           <div>
@@ -110,6 +108,7 @@ export function SettingsPage() {
               <div>
                 <strong>{library.name}</strong>
                 <code>{library.root_path}</code>
+                {!library.enabled && <small>已停用</small>}
               </div>
               <div className="library-state">
                 {library.writable ? (
@@ -126,7 +125,7 @@ export function SettingsPage() {
               <div className="library-actions">
                 <Button
                   onClick={() => scan.mutate({ id: library.id, mode: "incremental" })}
-                  disabled={scan.isPending || job?.status === "running"}
+                  disabled={!library.enabled || scan.isPending || scanning}
                 >
                   <Play size={14} weight="fill" />
                   增量扫描
@@ -134,13 +133,16 @@ export function SettingsPage() {
                 <Button
                   variant="ghost"
                   onClick={() => scan.mutate({ id: library.id, mode: "full" })}
-                  disabled={scan.isPending || job?.status === "running"}
+                  disabled={!library.enabled || scan.isPending || scanning}
                 >
                   Full Scan
                 </Button>
+                <Button variant="ghost" onClick={() => { setEditName(library.name); setEditLibrary(library); }}>编辑</Button>
+                <Button variant="ghost" disabled={update.isPending || scanning} onClick={() => update.mutate({ id: library.id, enabled: !library.enabled })}>{library.enabled ? "停用" : "启用"}</Button>
                 <Button
                   variant="ghost"
                   aria-label={`移除 ${library.name}`}
+                  disabled={remove.isPending || scanning}
                   onClick={() => {
                     if (window.confirm("只移除 PhotoSweep 索引，不会删除任何媒体文件。继续吗？")) {
                       remove.mutate(library.id);
@@ -152,7 +154,8 @@ export function SettingsPage() {
               </div>
             </article>
           ))}
-          {!libraries.data?.data.length && (
+          {libraries.isLoading && <div className="grid-loading">正在加载图库…</div>}
+          {!libraries.isLoading && !libraries.error && !libraries.data?.data.length && (
             <div className="settings-empty">
               <HardDrive size={24} />
               <div>
@@ -163,22 +166,9 @@ export function SettingsPage() {
           )}
         </div>
       </section>
-      {job && (
-        <section className="settings-section job-card">
-          <header>
-            <div>
-              <h2>{job.phase}</h2>
-              <p>
-                已处理 {job.processed.toLocaleString("zh-CN")} 个文件
-                {job.result?.errors ? ` · ${job.result.errors} 个元数据错误` : ""}
-              </p>
-            </div>
-            <span className={`job-badge job-badge--${job.status}`}>{job.status}</span>
-          </header>
-          <progress value={job.percent ?? (job.status === "completed" ? 100 : 2)} max={100} />
-          {job.error && <div className="inline-error">{job.error}</div>}
-        </section>
-      )}
+      <JobProgress jobId={activeJobId} />
+      <FileOperationIssues />
+      <InstanceSettings />
       <section className="settings-grid">
         <article>
           <span>
@@ -199,9 +189,10 @@ export function SettingsPage() {
           </div>
         </article>
       </section>
-      {(create.error || scan.error || remove.error) && (
-        <div className="toast-error">{(create.error ?? scan.error ?? remove.error)?.message}</div>
+      {(create.error || scan.error || remove.error || update.error) && (
+        <div role="alert" className="toast-error">{(create.error ?? scan.error ?? remove.error ?? update.error)?.message}</div>
       )}
+      {editLibrary && <Modal title="编辑 Library" onClose={() => setEditLibrary(undefined)}><form className="modal-form" onSubmit={(event) => { event.preventDefault(); update.mutate({ id: editLibrary.id, name: editName.trim() }); }}><label>Library 名称<Input value={editName} onChange={(event) => setEditName(event.target.value)} required maxLength={120} autoFocus /></label><footer><Button type="button" onClick={() => setEditLibrary(undefined)}>取消</Button><Button type="submit" variant="primary" disabled={!editName.trim() || update.isPending}>保存</Button></footer></form></Modal>}
       {addOpen && (
         <Modal title="添加照片 Library" onClose={() => setAddOpen(false)}>
           <form onSubmit={submit} className="modal-form">
@@ -241,4 +232,38 @@ export function SettingsPage() {
       )}
     </section>
   );
+}
+
+type InstanceSettingsData = { thumbnail_cache_gb: number; metadata_workers: number };
+
+type FileOperationIssue = { id: number; operation: string; state: string; media_id?: number; trash_item_id?: number; error?: string; updated_at?: string };
+
+function FileOperationIssues() {
+  const issues = useQuery({ queryKey: ["file-operations"], queryFn: () => api<FileOperationIssue[]>("/file-operations?limit=50") });
+  if (issues.error) return <ErrorState error={issues.error} retry={() => issues.refetch()} />;
+  const items = issues.data?.data ?? [];
+  if (!items.length) return null;
+  const operationName: Record<string, string> = { move: "移入回收站", restore: "恢复", delete: "永久删除" };
+  return <section className="settings-section operation-issues">
+    <header><div><h2>有文件操作需要检查</h2><p>共 {issues.data?.meta.total ?? items.length} 项，显示最近 {items.length} 项。系统会尽量保留原文件或副本；状态不明确时，不会自动删除任何一侧。</p></div><Button onClick={() => issues.refetch()}>刷新</Button></header>
+    <p className="muted-note">请根据操作编号和错误检查 NAS 上的原目录、回收站及服务日志。确认文件完整前，不要自动重试删除。</p>
+    <ul>{items.map((item) => <li key={item.id}><strong>#{item.id} · {operationName[item.operation] ?? item.operation} · {item.state === "failed" ? "失败" : "未完成"}</strong><span>媒体 #{item.media_id ?? "—"} / 回收站 #{item.trash_item_id ?? "—"} · {formatDate(item.updated_at)}</span><p>{item.error ?? "操作尚未完成，请检查文件状态。"}</p></li>)}</ul>
+  </section>;
+}
+
+function InstanceSettings() {
+  const queryClient = useQueryClient();
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<InstanceSettingsData>("/settings") });
+  const [draft, setDraft] = useState<InstanceSettingsData>();
+  const save = useMutation({ mutationFn: () => api("/settings", { method: "PATCH", body: draft }), onSuccess: () => { setDraft(undefined); void queryClient.invalidateQueries({ queryKey: ["settings"] }); } });
+  const values = draft ?? settings.data?.data;
+  return <section className="settings-section"><header><div><h2>缓存与扫描资源</h2><p>缩略图按需生成；缓存达到配额时清理旧缓存，不影响原始文件。</p></div></header>
+    {settings.error && <ErrorState error={settings.error} retry={() => settings.refetch()} />}
+    {values && <form className="instance-settings" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}>
+      <label>缩略图缓存上限（GB）<Input type="number" min={1} max={100} required value={values.thumbnail_cache_gb} onChange={(event) => { save.reset(); setDraft({ ...values, thumbnail_cache_gb: Number(event.target.value) }); }} /></label>
+      <label>元数据扫描并发数<Input type="number" min={1} max={8} required value={values.metadata_workers} onChange={(event) => { save.reset(); setDraft({ ...values, metadata_workers: Number(event.target.value) }); }} /></label>
+      <Button type="submit" variant="primary" disabled={!draft || save.isPending}>{save.isPending ? "正在保存…" : "保存设置"}</Button>
+      {save.isSuccess && <span role="status">已保存</span>}{save.error && <ErrorState error={save.error} />}
+    </form>}
+  </section>;
 }

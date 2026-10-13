@@ -1,8 +1,8 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Broom, LockKey, ShieldCheck } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
-import { Button, Input } from "../components/ui";
+import { api, ApiError } from "../lib/api";
+import { Button, ErrorState, Input } from "../components/ui";
 
 function AuthForm({
   setup,
@@ -106,6 +106,11 @@ function AuthForm({
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  useEffect(() => {
+    const expire = () => { void queryClient.invalidateQueries({ queryKey: ["me"] }); };
+    window.addEventListener("photosweep:session-expired", expire);
+    return () => window.removeEventListener("photosweep:session-expired", expire);
+  }, [queryClient]);
   const setup = useQuery({
     queryKey: ["setup"],
     queryFn: () => api<{ configured: boolean }>("/setup/status"),
@@ -129,6 +134,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   if (!configured) {
+    if (setup.error) return <main className="splash"><ErrorState error={setup.error} retry={() => setup.refetch()} /></main>;
     return (
       <AuthForm
         setup
@@ -140,6 +146,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   if (me.isError) {
+    if (!(me.error instanceof ApiError && me.error.status === 401)) return <main className="splash"><ErrorState error={me.error} retry={() => me.refetch()} /></main>;
     return (
       <AuthForm
         setup={false}
