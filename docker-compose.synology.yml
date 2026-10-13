@@ -31,6 +31,8 @@ services:
       - CHOWN
       - SETGID
       - SETUID
+      # Required by Docker's root init to forward signals after gosu changes UID.
+      - KILL
     security_opt:
       - no-new-privileges:true
     init: true

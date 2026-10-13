@@ -67,7 +67,7 @@ jobs:
             --entrypoint python photosweep:verify /opt/smoke.py --seed
           docker run -d --name photosweep-verify --platform linux/${{ matrix.arch }} \
             --read-only --tmpfs /tmp:mode=1777,size=256m --cap-drop ALL \
-            --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+            --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add KILL \
             --security-opt no-new-privileges:true --init \
             -v photosweep-data:/app/data -v photosweep-cache:/app/cache \
             -v "${RUNNER_TEMP}/photosweep-media:/media/photos:ro" \
@@ -85,9 +85,13 @@ jobs:
           docker exec photosweep-verify python -c "import pillow_heif; print(pillow_heif.__version__)"
           docker exec -u 1000:1000 photosweep-verify python /opt/smoke.py
           docker restart photosweep-verify
-          sleep 5
-          curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://127.0.0.1:8765/health/ready
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:8765/health/ready; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8765/health/ready
           docker exec -u 1000:1000 photosweep-verify python /opt/smoke.py --persisted
+          if docker logs photosweep-verify 2>&1 | grep -q 'FATAL tini'; then exit 1; fi
       - name: Export tested image for Synology file import
         shell: bash
         run: |

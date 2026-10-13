@@ -32,6 +32,8 @@ services:
       - CHOWN
       - SETGID
       - SETUID
+      # Root init must forward shutdown signals to the downgraded application UID.
+      - KILL
     security_opt:
       - no-new-privileges:true
     init: true

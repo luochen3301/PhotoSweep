@@ -151,7 +151,8 @@ Vite 会把 `/api` 和 `/health` 代理到 `127.0.0.1:8000`。
 - 跨文件系统先复制、fsync、验证大小和 SHA-256，再删除 Source。
 - Restore 不覆盖同名文件，会生成 `_restored_1`。
 - Permanent Delete 只允许处理数据库登记的 Trash 项目，并要求密码复核。
-- 容器使用只读根文件系统、非 root 用户、移除 Linux capabilities。
+- 容器使用只读根文件系统，应用降权为非 root。Compose 先移除全部 capabilities，
+  仅给启动进程保留 CHOWN/SETUID/SETGID，以及让 init 向降权后的应用转发退出信号的 KILL。
 
 ## 升级与操作异常
 
