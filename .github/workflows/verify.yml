@@ -29,7 +29,7 @@ jobs:
       - run: .venv/bin/ruff check backend && .venv/bin/pytest -q
       - run: .venv/bin/python scripts/benchmark_api_100k.py
       - working-directory: frontend
-        run: npm ci && npm run typecheck && npm run test:unit && npm run test:sites && npm run build
+        run: npm ci && npm run typecheck && npm run test:unit && npm run build && npm run test:sites
       - working-directory: frontend
         run: npx playwright install --with-deps chromium && npm run test:e2e
       - uses: actions/upload-artifact@v4
@@ -60,11 +60,18 @@ jobs:
       - name: Read-only container, non-root application and bundled tools
         shell: bash
         run: |
+          mkdir -p "${RUNNER_TEMP}/photosweep-media"
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "${RUNNER_TEMP}/photosweep-media:/fixtures" \
+            -v "${PWD}/scripts/container_smoke.py:/opt/smoke.py:ro" \
+            --entrypoint python photosweep:verify /opt/smoke.py --seed
           docker run -d --name photosweep-verify --platform linux/${{ matrix.arch }} \
             --read-only --tmpfs /tmp:mode=1777,size=256m --cap-drop ALL \
             --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
             --security-opt no-new-privileges:true --init \
             -v photosweep-data:/app/data -v photosweep-cache:/app/cache \
+            -v "${RUNNER_TEMP}/photosweep-media:/media/photos:ro" \
+            -v "${PWD}/scripts/container_smoke.py:/opt/smoke.py:ro" \
             -v photosweep-trash:/trash -p 8765:8080 photosweep:verify
           for i in {1..90}; do
             if curl -fsS http://127.0.0.1:8765/health/ready; then break; fi
@@ -76,9 +83,11 @@ jobs:
           docker exec photosweep-verify ffprobe -version
           docker exec photosweep-verify exiftool -ver
           docker exec photosweep-verify python -c "import pillow_heif; print(pillow_heif.__version__)"
+          docker exec -u 1000:1000 photosweep-verify python /opt/smoke.py
           docker restart photosweep-verify
           sleep 5
           curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://127.0.0.1:8765/health/ready
+          docker exec -u 1000:1000 photosweep-verify python /opt/smoke.py --persisted
       - name: Container logs
         if: always()
         run: docker logs photosweep-verify || true
