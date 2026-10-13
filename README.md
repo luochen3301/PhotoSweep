@@ -92,7 +92,8 @@ volumes:
   # - /volume1/homes/<DSM用户名>/Photos:/media/personal:ro
 ```
 
-只读 Library 可以扫描，但界面会禁用移动、恢复和永久删除。
+只读 Library 可以扫描和审核，但不能移出或恢复原库文件。已经位于独立 `/trash`
+中的文件仍可通过管理员密码确认永久删除；这不会写入只读相册。
 
 ## Synology Container Manager
 
@@ -100,8 +101,9 @@ volumes:
 2. 在 Container Manager 的“项目”中导入 `docker-compose.yml`。
 3. 将 `PHOTOS_PATH` 指向 `/volume1/photo`、个人 Photos 目录或其他明确目录。
 4. 为 data/cache/trash 创建独立目录并授权给 `PUID/PGID`。
-5. 建议通过 DSM 反向代理提供 HTTPS，并把
-   `PHOTOSWEEP_COOKIE_SECURE=true`。
+5. 建议通过 DSM 反向代理提供 HTTPS，并设置 `PHOTOSWEEP_COOKIE_SECURE=true` 和
+   `PHOTOSWEEP_PUBLIC_ORIGIN=https://你的访问域名`（有非标准端口时包含端口，不含路径）。
+   `FORWARDED_ALLOW_IPS` 仅填写受信任的代理 IP，不能在公开端口上使用 `*`。
 
 PhotoSweep 不会自动发现 Synology Photos 路径，也不会绕过 DSM 权限。
 
@@ -151,18 +153,35 @@ Vite 会把 `/api` 和 `/health` 代理到 `127.0.0.1:8000`。
 - Permanent Delete 只允许处理数据库登记的 Trash 项目，并要求密码复核。
 - 容器使用只读根文件系统、非 root 用户、移除 Linux capabilities。
 
+## 升级与操作异常
+
+启动会自动执行 Alembic 迁移，旧数据库升级前在 data 中生成 `pre-upgrade-*.db` 一致性备份。
+仍建议升级前停止容器，备份整个 data 和 trash 目录；数据库备份不能代替照片备份。
+不要让两个 PhotoSweep 容器同时写同一数据库，也不要绕过单 worker 限制。
+
+设置页会显示未完成的文件操作。重启只核对已经完成且可证明的移动，不自动删除不明确的副本。
+看到该提示时先停止进一步清理并检查原路径和回收站，不要直接清空 trash 文件夹。
+
 ## 验证
 
 ```powershell
 .\.venv\Scripts\ruff.exe check backend
 .\.venv\Scripts\pytest.exe -q
 $env:PYTHONPATH="backend"
-.\.venv\Scripts\python.exe scripts\benchmark_100k.py
+.\.venv\Scripts\python.exe scripts\benchmark_api_100k.py
 cd frontend
 npm run typecheck
 npm run build
 npm run test:sites
+npm run test:unit
+npx playwright install chromium
+npm run test:e2e
 ```
+
+`Verify PhotoSweep` 会在 Linux 执行回归与真实 API 压测，并分别运行 amd64 与 arm64
+容器测试（后者使用 QEMU），检查只读根文件系统、非 root 应用、HEIC/GIF/视频缩略图、
+只读照片挂载、精确重复检测和重启持久性。发布镜像的工作流必须先通过这些检查。
+测试使用临时样本和独立数据库，不读取你的相册。
 
 ## V1 明确不包含
 

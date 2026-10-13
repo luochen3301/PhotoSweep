@@ -127,7 +127,8 @@ def verify(persisted: bool) -> None:
     assert len(groups) == 1 and groups[0]["copy_count"] == 2, groups
     assert len(list(Path("/media/photos").iterdir())) == 6
     print(
-        "Real HEIF/GIF/EXIF/video scan, WebP thumbnails, duplicate hashes and read-only guard verified"
+        "Real HEIF/GIF/EXIF/video scan, WebP thumbnails, duplicate hashes "
+        "and read-only guard verified"
     )
 
 

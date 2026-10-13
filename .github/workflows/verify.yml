@@ -88,6 +88,21 @@ jobs:
           sleep 5
           curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://127.0.0.1:8765/health/ready
           docker exec -u 1000:1000 photosweep-verify python /opt/smoke.py --persisted
+      - name: Export tested image for Synology file import
+        shell: bash
+        run: |
+          docker tag photosweep:verify photosweep:verified-${{ matrix.arch }}
+          docker image save --output photosweep-${{ matrix.arch }}.tar photosweep:verified-${{ matrix.arch }}
+          tar -tf photosweep-${{ matrix.arch }}.tar | grep '^manifest.json$'
+          sha256sum photosweep-${{ matrix.arch }}.tar > photosweep-${{ matrix.arch }}.tar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: photosweep-${{ matrix.arch }}-image
+          path: |
+            photosweep-${{ matrix.arch }}.tar
+            photosweep-${{ matrix.arch }}.tar.sha256
+          compression-level: 0
+          retention-days: 14
       - name: Container logs
         if: always()
         run: docker logs photosweep-verify || true
